@@ -248,15 +248,13 @@ var handleCloudWatch = function(event, context) {
   }
 
   var slackMessage = {
-    text: "*" + subject + "*",
+    text: "`" + alarmName + "`",
     attachments: [
       {
         "color": color,
         "fields": [
-          { "title": "Alarm Name", "value": alarmName, "short": true },
-          { "title": "Alarm Description", "value": alarmDescription, "short": false},
           {
-            "title": "Trigger",
+            "title": "CloudWatch Trigger",
             "value": trigger.Statistic + " "
               + metricName + " "
               + trigger.ComparisonOperator + " "
@@ -264,13 +262,6 @@ var handleCloudWatch = function(event, context) {
               + trigger.EvaluationPeriods + " period(s) of "
               + trigger.Period + " seconds.",
               "short": false
-          },
-          { "title": "Old State", "value": oldState, "short": true },
-          { "title": "Current State", "value": newState, "short": true },
-          {
-            "title": "Link to Alarm",
-            "value": "https://console.aws.amazon.com/cloudwatch/home?region=" + region + "#alarm:alarmFilter=ANY;name=" + encodeURIComponent(alarmName),
-            "short": false
           }
         ],
         "ts":  timestamp
