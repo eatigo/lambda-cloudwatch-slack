@@ -5,17 +5,7 @@ var config = require('./config');
 var _ = require('lodash');
 var hookUrl;
 
-var baseSlackMessage = {
-  channel: config.slackChannel,
-  username: config.slackUsername,
-  icon_emoji: config.icon_emoji,
-  attachments: [
-    {
-      "footer": config.orgName,
-      "footer_icon": config.orgIcon
-    }
-  ]
-}
+var baseSlackMessage = {}
 
 var postMessage = function(message, callback) {
   var body = JSON.stringify(message);
@@ -144,6 +134,65 @@ var handleCodeDeploy = function(event, context) {
   return _.merge(slackMessage, baseSlackMessage);
 };
 
+var handleCodePipeline = function(event, context) {
+  var subject = "AWS CodePipeline Notification";
+  var timestamp = (new Date(event.Records[0].Sns.Timestamp)).getTime()/1000;
+  var snsSubject = event.Records[0].Sns.Subject;
+  var message;
+  var fields = [];
+  var color = "warning";
+  var changeType = "";
+
+  try {
+    message = JSON.parse(event.Records[0].Sns.Message);
+    detailType = message['detail-type'];
+
+    if(detailType === "CodePipeline Pipeline Execution State Change"){
+      changeType = "";
+    } else if(detailType === "CodePipeline Stage Execution State Change"){
+      changeType = "STAGE " + message.detail.stage;
+    } else if(detailType === "CodePipeline Action Execution State Change"){
+      changeType = "ACTION";
+    }
+
+    if(message.detail.state === "SUCCEEDED"){
+      color = "good";
+    } else if(message.detail.state === "FAILED"){
+      color = "danger";
+    }
+    header = message.detail.state + ": CodePipeline " + changeType;
+    fields.push({ "title": "Message", "value": header, "short": false });
+    fields.push({ "title": "Pipeline", "value": message.detail.pipeline, "short": true });
+    fields.push({ "title": "Region", "value": message.region, "short": true });
+    fields.push({
+      "title": "Status Link",
+      "value": "https://console.aws.amazon.com/codepipeline/home?region=" + message.region + "#/view/" + message.detail.pipeline,
+      "short": false
+    });
+  }
+  catch(e) {
+    color = "good";
+    message = event.Records[0].Sns.Message;
+    header = message.detail.state + ": CodePipeline " + message.detail.pipeline;
+    fields.push({ "title": "Message", "value": header, "short": false });
+    fields.push({ "title": "Detail", "value": message, "short": false });
+  }
+
+
+  var slackMessage = {
+    text: "*" + subject + "*",
+    attachments: [
+      {
+        "color": color,
+        "fields": fields,
+        "ts": timestamp
+      }
+    ]
+  };
+
+  return _.merge(slackMessage, baseSlackMessage);
+};
+
 var handleElasticache = function(event, context) {
   var subject = "AWS ElastiCache Notification"
   var message = JSON.parse(event.Records[0].Sns.Message);
@@ -205,7 +254,7 @@ var handleCloudWatch = function(event, context) {
         "color": color,
         "fields": [
           { "title": "Alarm Name", "value": alarmName, "short": true },
-          { "title": "Alarm Description", "value": alarmReason, "short": false},
+          { "title": "Alarm Description", "value": alarmDescription, "short": false},
           {
             "title": "Trigger",
             "value": trigger.Statistic + " "
@@ -309,25 +358,36 @@ var processEvent = function(event, context) {
   var slackMessage = null;
   var eventSubscriptionArn = event.Records[0].EventSubscriptionArn;
   var eventSnsSubject = event.Records[0].Sns.Subject || 'no subject';
-  var eventSnsMessage = event.Records[0].Sns.Message;
+  var eventSnsMessageRaw = event.Records[0].Sns.Message;
+  var eventSnsMessage = null;
 
-  if(eventSubscriptionArn.indexOf(config.services.elasticbeanstalk.match_text) > -1 || eventSnsSubject.indexOf(config.services.elasticbeanstalk.match_text) > -1 || eventSnsMessage.indexOf(config.services.elasticbeanstalk.match_text) > -1){
+  try {
+    eventSnsMessage = JSON.parse(eventSnsMessageRaw);
+  }
+  catch (e) {    
+  }
+
+  if(eventSubscriptionArn.indexOf(config.services.codepipeline.match_text) > -1 || eventSnsSubject.indexOf(config.services.codepipeline.match_text) > -1 || eventSnsMessageRaw.indexOf(config.services.codepipeline.match_text) > -1){
+    console.log("processing codepipeline notification");
+    slackMessage = handleCodePipeline(event,context)
+  }
+  else if(eventSubscriptionArn.indexOf(config.services.elasticbeanstalk.match_text) > -1 || eventSnsSubject.indexOf(config.services.elasticbeanstalk.match_text) > -1 || eventSnsMessageRaw.indexOf(config.services.elasticbeanstalk.match_text) > -1){
     console.log("processing elasticbeanstalk notification");
     slackMessage = handleElasticBeanstalk(event,context)
   }
-  else if(eventSubscriptionArn.indexOf(config.services.cloudwatch.match_text) > -1 || eventSnsSubject.indexOf(config.services.cloudwatch.match_text) > -1 || eventSnsMessage.indexOf(config.services.cloudwatch.match_text) > -1){
+  else if(eventSnsMessage && 'AlarmName' in eventSnsMessage && 'AlarmDescription' in eventSnsMessage){
     console.log("processing cloudwatch notification");
     slackMessage = handleCloudWatch(event,context);
   }
-  else if(eventSubscriptionArn.indexOf(config.services.codedeploy.match_text) > -1 || eventSnsSubject.indexOf(config.services.codedeploy.match_text) > -1 || eventSnsMessage.indexOf(config.services.codedeploy.match_text) > -1){
+  else if(eventSubscriptionArn.indexOf(config.services.codedeploy.match_text) > -1 || eventSnsSubject.indexOf(config.services.codedeploy.match_text) > -1 || eventSnsMessageRaw.indexOf(config.services.codedeploy.match_text) > -1){
     console.log("processing codedeploy notification");
     slackMessage = handleCodeDeploy(event,context);
   }
-  else if(eventSubscriptionArn.indexOf(config.services.elasticache.match_text) > -1 || eventSnsSubject.indexOf(config.services.elasticache.match_text) > -1 || eventSnsMessage.indexOf(config.services.elasticache.match_text) > -1){
+  else if(eventSubscriptionArn.indexOf(config.services.elasticache.match_text) > -1 || eventSnsSubject.indexOf(config.services.elasticache.match_text) > -1 || eventSnsMessageRaw.indexOf(config.services.elasticache.match_text) > -1){
     console.log("processing elasticache notification");
     slackMessage = handleElasticache(event,context);
   }
-  else if(eventSubscriptionArn.indexOf(config.services.autoscaling.match_text) > -1 || eventSnsSubject.indexOf(config.services.autoscaling.match_text) > -1 || eventSnsMessage.indexOf(config.services.autoscaling.match_text) > -1){
+  else if(eventSubscriptionArn.indexOf(config.services.autoscaling.match_text) > -1 || eventSnsSubject.indexOf(config.services.autoscaling.match_text) > -1 || eventSnsMessageRaw.indexOf(config.services.autoscaling.match_text) > -1){
     console.log("processing autoscaling notification");
     slackMessage = handleAutoScaling(event, context);
   }
